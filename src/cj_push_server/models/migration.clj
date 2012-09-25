@@ -7,7 +7,6 @@
                       [:id :serial "PRIMARY KEY"]
                       [:callback :varchar "NOT NULL"]
                       [:topic :varchar "NOT NULL"]
-                      [:verify :varchar "NOT NULL"]
                       [:last_fetched_at :timestamp  "DEFAULT CURRENT_TIMESTAMP"]
                       [:created_at :timestamp  "DEFAULT CURRENT_TIMESTAMP"])))
 
