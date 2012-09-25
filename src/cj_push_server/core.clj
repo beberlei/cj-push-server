@@ -20,7 +20,7 @@
   (apply str (take length (repeatedly random-char)))) 
 
 (defroutes routes
-  (POST "/subscribe" {params :params} 
+  (POST "/" {params :params} 
         (let [challenge (random-str 32)
               hub (:hub params)
               mode (:mode hub)]
@@ -41,7 +41,9 @@
                                              [(:callback hub) (:topic hub) challenge])
                           {:status 204 :body ""})
                         {:status 400 :body "Challenge was not accepted."})))))
-             {:status 400 :body "Unknown mode"})))
+             (if (= mode "publish")
+               {:status 204 :body ""}
+               {:status 400 :body "Unknown mode"}))))
   (GET "/" [] {:status 204 :body ""}))
 
 (def app
