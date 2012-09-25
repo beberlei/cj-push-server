@@ -22,22 +22,26 @@
 (defroutes routes
   (POST "/subscribe" {params :params} 
         (let [challenge (random-str 32)
-              hub (:hub params)]
-          (if (string/blank? (:callback hub))
-              {:status 400 :body "Callback is required"}
-              (if (string/blank? (:topic hub))
-                {:status 400 :body "Topic is required"}
-                (with-open [client (http/create-client)] ; Create client
-                  (let [req {"hub[mode]" (:mode hub) "hub[topic]" (:topic hub) "hub[challenge]" challenge}
-                        resp (http/POST client (:callback hub) :body req)]
-                    (if (= challenge (http/string resp))
-                      (sql/with-connection
-                        {:connection-uri (System/getenv "DATABASE_URL")}
-                        (sql/insert-values :subscriptions
-                                           [:callback :topic :verify]
-                                           [(:callback hub) (:topic hub) challenge])
-                        {:status 204 :body ""})
-                      {:status 400 :body "Challenge was not accepted."})))))))
+              hub (:hub params)
+              mode (:mode hub)]
+          (if (= mode "subscribe")
+            (if (string/blank? (:callback hub))
+                {:status 400 :body "Callback is required"}
+                (if (string/blank? (:topic hub))
+                  {:status 400 :body "Topic is required"}
+                  (with-open [client (http/create-client)] ; Create client
+                    (let [req {"hub[mode]" (:mode hub) "hub[topic]" (:topic hub) "hub[challenge]" challenge}
+                          resp (http/POST client (:callback hub) :body req)
+                          status (http/status resp)]
+                      (if (and (= (:code status) 200) (= challenge (http/string resp)))
+                        (sql/with-connection
+                          {:connection-uri (System/getenv "DATABASE_URL")}
+                          (sql/insert-values :subscriptions
+                                             [:callback :topic :verify]
+                                             [(:callback hub) (:topic hub) challenge])
+                          {:status 204 :body ""})
+                        {:status 400 :body "Challenge was not accepted."})))))
+             {:status 400 :body "Unknown mode"})))
   (GET "/" [] {:status 204 :body ""}))
 
 (def app
