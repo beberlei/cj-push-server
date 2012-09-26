@@ -42,7 +42,14 @@
                           {:status 204 :body ""})
                         {:status 400 :body "Challenge was not accepted."})))))
              (if (= mode "publish")
-               {:status 204 :body ""}
+               (if (string/blank? (:topic hub))
+                 {:status 400 :body "Topic is required"}
+                 (sql/with-connection
+                   {:connection-uri (System/getenv "DATABASE_URL")} 
+                   (sql/with-query-results results
+                                           ["SELECT * FROM subscriptions WHERE topic = ?" (:topic hub)]
+                                           (into [] results))
+                   {:status 204 :body ""}))
                {:status 400 :body "Unknown mode"}))))
   (GET "/" [] {:status 204 :body ""}))
 

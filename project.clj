@@ -6,5 +6,6 @@
                  [compojure "1.1.3"]
                  [postgresql/postgresql "8.4-702.jdbc4"]
                  [http.async.client "0.5.0-SNAPSHOT"]
+                 [org.clojars.kyleburton/clj-xpath "1.0.10"]
                  [org.clojure/java.jdbc "0.2.3"]])
 
