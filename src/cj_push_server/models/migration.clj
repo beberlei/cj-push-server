@@ -6,7 +6,8 @@
                     [:id :serial "PRIMARY KEY"]
                     [:callback :varchar "NOT NULL"]
                     [:topic_id :integer "NOT NULL"]
-                    [:created_at :timestamp  "DEFAULT CURRENT_TIMESTAMP"]))
+                    [:created_at :timestamp  "DEFAULT CURRENT_TIMESTAMP"]
+                    ["UNIQUE" "(topic_id, callback)"]))
 
 (defn create-topics []
   (sql/create-table :topics

@@ -42,6 +42,13 @@
         (create-topic topic)
         (do row))))
 
+(defn subscription-exists? [topic_id callback]
+  (sql/with-query-results results ["SELECT count(*) AS exists FROM subscriptions WHERE topic_id = ? AND callback = ?" 
+                                   topic_id
+                                   callback]
+                          (let [exists (:exists (first results))]
+                            (= exists 1))))
+
 (defroutes routes
   (POST "/" {params :params} 
         (let [challenge (random-str 32)
@@ -54,19 +61,22 @@
                 {:status 400 :body "Topic is required"}
                 (sql/with-connection
                   {:connection-uri (System/getenv "DATABASE_URL")}
-                  (with-open [client (http/create-client)] ; Create client
-                    (doto (new java.net.URL (:topic hub)) (.toURI))
-                    (doto (new java.net.URL (:callback hub)) (.toURI))
-                    (let [req {"hub[mode]" (:mode hub) "hub[topic]" (:topic hub) "hub[challenge]" challenge}
-                          resp (http/POST client (:callback hub) :body req)
-                          status (http/status resp)]
-                      (if (and (= (:code status) 200) (= challenge (http/string resp)))
-                        (let [row (get-or-create-topic (:topic hub))]
-                          (sql/insert-values :subscriptions
-                                             [:callback :topic_id]
-                                             [(:callback hub) (:id row)])
+                  (let [topic_row (get-or-create-topic (:topic hub))
+                        topic_id (:id topic_row)]
+                    (if (subscription-exists? topic_id (:callback hub))
+                      {:status 409 :body "Subscription already exists"}
+                      (with-open [client (http/create-client)] ; Create client
+                        (doto (new java.net.URL (:topic hub)) (.toURI))
+                        (doto (new java.net.URL (:callback hub)) (.toURI))
+                        (let [req {"hub[mode]" (:mode hub) "hub[topic]" (:topic hub) "hub[challenge]" challenge}
+                              resp (http/POST client (:callback hub) :body req)
+                              status (http/status resp)]
+                          (if (and (= (:code status) 200) (= challenge (http/string resp)))
+                            (sql/insert-values :subscriptions
+                                               [:callback :topic_id]
+                                               [(:callback hub) topic_id])
                           {:status 204 :body ""})
-                        {:status 400 :body "Challenge was not accepted."}))))))
+                        {:status 400 :body "Challenge was not accepted."})))))))
              (if (= mode "publish")
                (if (string/blank? (:topic hub))
                  {:status 400 :body "Topic is required"}
