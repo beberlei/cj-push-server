@@ -5,6 +5,7 @@
               [compojure.handler :as handler]
               [clojure.java.jdbc :as sql] 
               [clojure.string :as string]
+              [clj-time.core :as date]
               [http.async.client :as http]
               [compojure.route :as route]))
 
@@ -77,6 +78,18 @@
           success)
         failure))))
 
+(defn push-fetch-required-feeds []
+  (let [date (date/minus (date/now) (date/minutes 15))]
+    (sql/with-query-results results
+                            ["SELECT id, topic FROM topics WHERE last_fetched_at < ?" date]
+                            (into results))))
+
+(defn push-fetch-feed [feed]
+  (with-open [client (http/create-client)] ; Create client
+    (let [resp (http/GET client (:topic feed))
+          status (http/status resp)]
+      (if (= (:code status) 200) (true) (true)))))
+
 (defroutes routes
   (POST "/" {params :params} 
         (let [hub (:hub params)
@@ -96,6 +109,12 @@
                       (push-challenge-subscription topic_id hub (= mode "subscribe")
                                                    {:status 204 :body ""}
                                                    {:status 400 :body "Challenge was not accepted."}))))))
+            (= mode "fetch")
+            (sql/with-connection
+              {:connection-uri (System/getenv "DATABASE_URL")}
+              (let [feeds push-fetch-required-feeds]
+                (apply push-fetch-feed feeds)
+              ))
             (= mode "publish") ; not finally implemented, because we don't act as a hub for now.
             (if (string/blank? (:topic hub))
               {:status 400 :body "Topic is required"}
