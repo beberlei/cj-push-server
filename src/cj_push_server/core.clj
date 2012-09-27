@@ -49,12 +49,32 @@
                           (let [exists (:exists (first results))]
                             (= exists 1))))
 
+(defn push-create-subscription [topic_id hub]
+  (let [callback (:callback hub)]
+    (sql/insert-values :subscriptions
+                       [:callback :topic_id]
+                       [(cast String callback) topic_id]
+                       )))
+                             
+(defn push-challenge-subscription [topic_id hub success failure]
+  (with-open [client (http/create-client)] ; Create client
+    (doto (new java.net.URL (:topic hub)) (.toURI))
+    (doto (new java.net.URL (:callback hub)) (.toURI))
+    (let [challenge (random-str 32)
+          req {"hub[mode]" (:mode hub) "hub[topic]" (:topic hub) "hub[challenge]" challenge}
+          resp (http/POST client (:callback hub) :body req)
+          challenge_check (http/string resp)
+          status (http/status resp)]
+      (if (and (= (:code status) 200) (= challenge challenge_check))
+        (do (push-create-subscription topic_id hub) success)
+        failure))))
+
 (defroutes routes
   (POST "/" {params :params} 
-        (let [challenge (random-str 32)
-              hub (:hub params)
+        (let [hub (:hub params)
               mode (:mode hub)]
-          (if (= mode "subscribe")
+          (cond
+            (= mode "subscribe")
             (if (string/blank? (:callback hub))
               {:status 400 :body "Callback is required"}
               (if (string/blank? (:topic hub))
@@ -65,29 +85,21 @@
                         topic_id (:id topic_row)]
                     (if (subscription-exists? topic_id (:callback hub))
                       {:status 409 :body "Subscription already exists"}
-                      (with-open [client (http/create-client)] ; Create client
-                        (doto (new java.net.URL (:topic hub)) (.toURI))
-                        (doto (new java.net.URL (:callback hub)) (.toURI))
-                        (let [req {"hub[mode]" (:mode hub) "hub[topic]" (:topic hub) "hub[challenge]" challenge}
-                              resp (http/POST client (:callback hub) :body req)
-                              status (http/status resp)]
-                          (if (and (= (:code status) 200) (= challenge (http/string resp)))
-                            (sql/insert-values :subscriptions
-                                               [:callback :topic_id]
-                                               [(:callback hub) topic_id])
-                          {:status 204 :body ""})
-                        {:status 400 :body "Challenge was not accepted."})))))))
-             (if (= mode "publish")
-               (if (string/blank? (:topic hub))
-                 {:status 400 :body "Topic is required"}
-                 (sql/with-connection {:connection-uri (System/getenv "DATABASE_URL")} 
-                   (let [topic-id (get-topic (:topic hub))]
-                     (doto (new java.net.URL (:topic hub)) (.toURI))
-                     (sql/with-query-results results
-                                             ["SELECT * FROM subscriptions WHERE topic_id = ?" topic-id]
-                                           (into [] results))
-                   {:status 204 :body ""})))
-               {:status 400 :body "Unknown mode"}))))
+                      (push-challenge-subscription topic_id hub
+                                                   {:status 204 :body ""}
+                                                   {:status 400 :body "Challenge was not accepted."}))))))
+            (= mode "publish") ; not finally implemented, because we don't act as a hub for now.
+            (if (string/blank? (:topic hub))
+              {:status 400 :body "Topic is required"}
+              (sql/with-connection {:connection-uri (System/getenv "DATABASE_URL")} 
+                                   (let [topic-id (get-topic (:topic hub))]
+                                     (doto (new java.net.URL (:topic hub)) (.toURI))
+                                     (sql/with-query-results results
+                                                             ["SELECT * FROM subscriptions WHERE topic_id = ?" topic-id]
+                                                             (into [] results))
+                                     {:status 204 :body ""})))
+            (= true true)
+            {:status 400 :body "Unknown mode"})))
   (GET "/" [] {:status 204 :body ""}))
 
 (def app
