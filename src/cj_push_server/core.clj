@@ -56,7 +56,11 @@
                        [(cast String callback) topic_id]
                        )))
                              
-(defn push-challenge-subscription [topic_id hub success failure]
+(defn push-delete-subscription [topic_id hub]
+  (let [callback (:callback hub)]
+    (sql/delete-rows :subscriptions ["callback = ? AND topic_id = ?" callback topic_id])))
+
+(defn push-challenge-subscription [topic_id hub is_subscription success failure]
   (with-open [client (http/create-client)] ; Create client
     (doto (new java.net.URL (:topic hub)) (.toURI))
     (doto (new java.net.URL (:callback hub)) (.toURI))
@@ -66,7 +70,11 @@
           challenge_check (http/string resp)
           status (http/status resp)]
       (if (and (= (:code status) 200) (= challenge challenge_check))
-        (do (push-create-subscription topic_id hub) success)
+        (do 
+          (if (= is_subscription true)
+            (push-create-subscription topic_id hub)
+            (push-delete-subscription topic_id hub))
+          success)
         failure))))
 
 (defroutes routes
@@ -74,7 +82,7 @@
         (let [hub (:hub params)
               mode (:mode hub)]
           (cond
-            (= mode "subscribe")
+            (= (or (= mode "subscribe") (= mode "unsubscribe")))
             (if (string/blank? (:callback hub))
               {:status 400 :body "Callback is required"}
               (if (string/blank? (:topic hub))
@@ -83,9 +91,9 @@
                   {:connection-uri (System/getenv "DATABASE_URL")}
                   (let [topic_row (get-or-create-topic (:topic hub))
                         topic_id (:id topic_row)]
-                    (if (subscription-exists? topic_id (:callback hub))
+                    (if (and (= mode "subscription") (subscription-exists? topic_id (:callback hub)))
                       {:status 409 :body "Subscription already exists"}
-                      (push-challenge-subscription topic_id hub
+                      (push-challenge-subscription topic_id hub (= mode "subscribe")
                                                    {:status 204 :body ""}
                                                    {:status 400 :body "Challenge was not accepted."}))))))
             (= mode "publish") ; not finally implemented, because we don't act as a hub for now.
