@@ -65,10 +65,8 @@
   (create-subscription [this topic_id hub])
   (delete-subscription [this topic_id hub])
   (challenge-subscription [this topic_id hub is_subscription success failure])
-  (fetch-required-feeds [this ])
+  (fetch-required-feeds [this])
   (get-subscriptions [this topic_id])
-  (distribute-feed-subscription [this feed-resp, subscription])
-  (distribute-feed [this feed])
 )
 
 (deftype PostgreSQLPushServer [] PushServer
@@ -137,21 +135,21 @@
     (sql/with-query-results results
                             ["SELECT * FROM subscriptions WHERE topic_id = ?" topic_id]
                             (into [] results)))
-
-  (distribute-feed-subscription [this feed-resp, subscription]
-    (with-open [client (http/create-client)]
-      (let [resp (http/POST client (:callback subscription) :body (http/string feed-resp))]
-          (http/await resp))))
-
-  (distribute-feed [this feed]
-    (with-open [client (http/create-client)] ; Create client
-      (let [resp (http/GET client (:topic feed))
-            subscriptions (get-subscriptions this (:id feed))
-            resv (http/await resp)]
-        (for [subscription subscriptions]
-          (distribute-feed-subscription this resv subscription))
-        (mark-topic-fetched this feed))))
 )
+
+(defn distribute-feed-subscription [feed-resp, subscription]
+  (with-open [client (http/create-client)]
+    (let [resp (http/POST client (:callback subscription) :body (http/string feed-resp))]
+        (http/await resp))))
+
+(defn distribute-feed [storage feed]
+  (with-open [client (http/create-client)] ; Create client
+    (let [resp (http/GET client (:topic feed))
+          subscriptions (get-subscriptions storage (:id feed))
+          resv (http/await resp)]
+      (doseq [subscription subscriptions]
+        (distribute-feed-subscription resv subscription))
+      (mark-topic-fetched storage feed))))
 
 (defn- make-push-server []
   (PostgreSQLPushServer.)
@@ -180,7 +178,8 @@
             (= mode "fetch")
             (wrap-connection
               (let [feeds (fetch-required-feeds push-server)]
-                (map '(distribute-feed push-server) feeds)
+                (doseq [feed feeds]
+                  (distribute-feed push-server feed))
                 {:status 202 :body "" }
               ))
             (= mode "publish") ; not finally implemented, because we don't act as a hub for now.
