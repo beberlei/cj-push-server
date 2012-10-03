@@ -25,7 +25,10 @@
 (defn random-str [length]
   (apply str (take length (repeatedly random-char)))) 
 
-(def db {:connection-uri (System/getenv "DATABASE_URL")})
+(def db
+  "Database either from DATABSE_URL Environment variable or defaults"
+  (or {:connection-uri (System/getenv "DATABASE_URL")}
+      "postgresql://push:push@localhost:5432/push"))
 
 ; https://gist.github.com/1177043
 (defmacro wrap-connection
@@ -53,23 +56,27 @@
                                 (doall res))
     first :currval))
 
-(defn create-topic [topic]
+(defn push-create-topic [topic]
   (sql/insert-values :topics [:topic :requires_fetching] [topic 1])
   (let [id (postgres-last-insert-id "topics" "id")]
     {:id id :topic topic :requires_fetching 1 :last_fetched_at nil}))
 
-(defn get-topic [topic]
+(defn push-get-topic [topic]
   (sql/with-query-results results ["SELECT * FROM topics WHERE topic = ?" topic]
                           (first results)))
 
-(defn get-or-create-topic [topic]
+(defn push-get-or-create-topic [topic]
   (doto (new java.net.URL topic) (.toURI))
-    (let [row (get-topic topic)]
+    (let [row (push-get-topic topic)]
       (if (= row nil)
-        (create-topic topic)
+        (push-create-topic topic)
         (do row))))
 
-(defn subscription-exists? [topic_id callback]
+(defn push-mark-feed-fetched [feed]
+  (let [now (date/now)]
+    (sql/update-values :topics ["id = ?" (:id feed)] {:last_fetched_at (postgres-date now)})))
+
+(defn push-subscription-exists? [topic_id callback]
   (sql/with-query-results results ["SELECT count(*) AS exists FROM subscriptions WHERE topic_id = ? AND callback = ?" 
                                    topic_id
                                    callback]
@@ -126,7 +133,8 @@
           subscriptions (push-get-subscriptions (:id feed))
           resv (http/await resp)]
       (for [subscription subscriptions]
-        (push-distribute-feed-subscription resv subscription)))))
+        (push-distribute-feed-subscription resv subscription))
+      (push-mark-feed-fetched feed))))
 
 (defroutes routes
   (POST "/" {params :params} 
@@ -139,9 +147,9 @@
               (if (string/blank? (:topic hub))
                 {:status 400 :body "Topic is required for subscription/unsubscription"}
                 (wrap-connection
-                  (let [topic_row (get-or-create-topic (:topic hub))
+                  (let [topic_row (push-get-or-create-topic (:topic hub))
                         topic_id (:id topic_row)]
-                    (if (and (= mode "subscription") (subscription-exists? topic_id (:callback hub)))
+                    (if (and (= mode "subscription") (push-subscription-exists? topic_id (:callback hub)))
                       {:status 409 :body "Subscription already exists"}
                       (push-challenge-subscription topic_id hub (= mode "subscribe")
                                                    {:status 204 :body ""}
@@ -156,7 +164,7 @@
             (if (string/blank? (:topic hub))
               {:status 400 :body "Topic is required for publishing"}
               (wrap-connection
-                (let [topic-id (get-topic (:topic hub))]
+                (let [topic-id (push-get-topic (:topic hub))]
                   (doto (new java.net.URL (:topic hub)) (.toURI))
                   (sql/with-query-results results
                                           ["SELECT * FROM subscriptions WHERE topic_id = ?" topic-id]
