@@ -11,7 +11,7 @@
               [http.async.client :as http]
               [compojure.route :as route]))
 
-;;debugging parts of expressions
+;debugging parts of expressions
 (defmacro dbg[x] `(let [x# ~x] (println "dbg:" '~x "=" x#) x#))
 
 (def VALID-CHARS
@@ -25,9 +25,26 @@
 (defn random-str [length]
   (apply str (take length (repeatedly random-char)))) 
 
+(def db {:connection-uri (System/getenv "DATABASE_URL")})
+
+; https://gist.github.com/1177043
+(defmacro wrap-connection
+  "Wrap the body inside a database connection" 
+  [& body]
+    `(if (sql/find-connection)
+           ~@body
+           (sql/with-connection db ~@body)))
+
+(defmacro wrap-transaction
+  "Wrap the body inside a database transaction"
+  [& body]
+    `(if (sql/find-connection)
+            (sql/transaction ~@body)
+            (sql/with-connection db (sql/transaction ~@body))))
+
 (defn postgres-date [dt]
   (java.sql.Timestamp/valueOf
-    (dbg (datef/unparse (datef/formatter "YYYY-MM-dd HH:mm:ss") dt))))
+    (datef/unparse (datef/formatter "YYYY-MM-dd HH:mm:ss") dt)))
 
 (defn postgres-last-insert-id [table col]
   (-> (sql/with-query-results res
@@ -98,15 +115,18 @@
                           ["SELECT * FROM subscriptions WHERE topic_id = ?" topic_id]
                           (into [] results)))
 
-(defn push-distribute-feed-subscription [client, feed-resp, subscription]
-  (http/POST client (:callback subscription) :body (http/string feed-resp)))
+(defn push-distribute-feed-subscription [feed-resp, subscription]
+  (with-open [client (http/create-client)]
+    (let [resp (http/POST client (:callback subscription) :body (http/string feed-resp))]
+        (http/await resp))))
 
 (defn push-distribute-feed [feed]
   (with-open [client (http/create-client)] ; Create client
     (let [resp (http/GET client (:topic feed))
-          subscriptions (push-get-subscriptions (:id feed))]
+          subscriptions (push-get-subscriptions (:id feed))
+          resv (http/await resp)]
       (for [subscription subscriptions]
-        (push-distribute-feed-subscription client (http/await resp) subscription)))))
+        (push-distribute-feed-subscription resv subscription)))))
 
 (defroutes routes
   (POST "/" {params :params} 
@@ -118,8 +138,7 @@
               {:status 400 :body "Callback is required for subscription/unsubscription"}
               (if (string/blank? (:topic hub))
                 {:status 400 :body "Topic is required for subscription/unsubscription"}
-                (sql/with-connection
-                  {:connection-uri (System/getenv "DATABASE_URL")}
+                (wrap-connection
                   (let [topic_row (get-or-create-topic (:topic hub))
                         topic_id (:id topic_row)]
                     (if (and (= mode "subscription") (subscription-exists? topic_id (:callback hub)))
@@ -128,22 +147,21 @@
                                                    {:status 204 :body ""}
                                                    {:status 400 :body "Challenge was not accepted."}))))))
             (= mode "fetch")
-            (sql/with-connection
-              {:connection-uri (System/getenv "DATABASE_URL")}
+            (wrap-connection
               (let [feeds push-fetch-required-feeds]
-                (map push-distribute-feed (dbg feeds))
+                (map push-distribute-feed feeds)
                 {:status 202 :body "" }
               ))
             (= mode "publish") ; not finally implemented, because we don't act as a hub for now.
             (if (string/blank? (:topic hub))
               {:status 400 :body "Topic is required for publishing"}
-              (sql/with-connection {:connection-uri (System/getenv "DATABASE_URL")} 
-                                   (let [topic-id (get-topic (:topic hub))]
-                                     (doto (new java.net.URL (:topic hub)) (.toURI))
-                                     (sql/with-query-results results
-                                                             ["SELECT * FROM subscriptions WHERE topic_id = ?" topic-id]
-                                                             (into [] results))
-                                     {:status 204 :body ""})))
+              (wrap-connection
+                (let [topic-id (get-topic (:topic hub))]
+                  (doto (new java.net.URL (:topic hub)) (.toURI))
+                  (sql/with-query-results results
+                                          ["SELECT * FROM subscriptions WHERE topic_id = ?" topic-id]
+                                          (into [] results))
+                  {:status 204 :body ""})))
             (= true true)
             {:status 400 :body "Unknown mode"})))
   (GET "/" [] {:status 204 :body ""}))
