@@ -180,8 +180,7 @@
               (let [feeds (fetch-required-feeds push-server)]
                 (doseq [feed feeds]
                   (distribute-feed push-server feed))
-                {:status 202 :body "" }
-              ))
+                {:status 202 :body "" }))
             (= mode "publish") ; not finally implemented, because we don't act as a hub for now.
             (if (string/blank? (:topic hub))
               {:status 400 :body "Topic is required for publishing"}
