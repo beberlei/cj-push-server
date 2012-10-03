@@ -56,6 +56,23 @@
                                 (doall res))
     first :currval))
 
+(defprotocol PushServer
+  (create-topic [this topic])
+  (get-topic [this topic])
+  (get-or-create-topic [this topic])
+  (mark-topic-fetched [this feed])
+  (subscription-exists? [this topic_id callback])
+  (create-subscription [this topic_id hub])
+  (delete-subscription [this topic_id hub])
+  (challenge-subscription [this topic_id hub is_subscription success failure])
+  (fetch-required-feeds [this ])
+  (get-subscriptions [this topic_id])
+  (distribute-feed-subscription [this feed-resp, subscription])
+  (distribute-feed [this feed])
+)
+
+;(deftype PostgreSQLPushServer [] PushServer
+
 (defn push-create-topic [topic]
   (sql/insert-values :topics [:topic :requires_fetching] [topic 1])
   (let [id (postgres-last-insert-id "topics" "id")]
