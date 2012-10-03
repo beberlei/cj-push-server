@@ -7,6 +7,8 @@
                  [postgresql/postgresql "8.4-702.jdbc4"]
                  [http.async.client "0.5.0-SNAPSHOT"]
                  [clj-time "0.4.4"]
-                 [clj-xpath "1.3.0"]
+                 [org.clojars.scsibug/feedparser-clj "0.4.0"]
+                 [org.clojure/data.zip "0.1.1"]
+                 [org.clojure/data.xml "0.0.6"]
                  [org.clojure/java.jdbc "0.2.3"]])
 

@@ -6,8 +6,13 @@
               [clojure.java.jdbc :as sql] 
               [clojure.string :as string]
               [clj-time.core :as date]
+              [clj-time.format :as datef]
+              [clojure.data.xml :as xml]
               [http.async.client :as http]
               [compojure.route :as route]))
+
+;;debugging parts of expressions
+(defmacro dbg[x] `(let [x# ~x] (println "dbg:" '~x "=" x#) x#))
 
 (def VALID-CHARS
   (map char (concat (range 48 58) ; 0-9
@@ -19,6 +24,10 @@
 
 (defn random-str [length]
   (apply str (take length (repeatedly random-char)))) 
+
+(defn postgres-date [dt]
+  (java.sql.Timestamp/valueOf
+    (dbg (datef/unparse (datef/formatter "YYYY-MM-dd HH:mm:ss") dt))))
 
 (defn postgres-last-insert-id [table col]
   (-> (sql/with-query-results res
@@ -81,25 +90,34 @@
 (defn push-fetch-required-feeds []
   (let [date (date/minus (date/now) (date/minutes 15))]
     (sql/with-query-results results
-                            ["SELECT id, topic FROM topics WHERE last_fetched_at < ?" date]
-                            (into results))))
+                            ["SELECT id, topic FROM topics WHERE last_fetched_at < ? OR last_fetched_at IS NULL" (postgres-date date)]
+                            (into [] results))))
 
-(defn push-fetch-feed [feed]
+(defn push-get-subscriptions [topic_id]
+  (sql/with-query-results results
+                          ["SELECT * FROM subscriptions WHERE topic_id = ?" topic_id]
+                          (into [] results)))
+
+(defn push-distribute-feed-subscription [client, feed-resp, subscription]
+  (http/POST client (:callback subscription) :body (http/string feed-resp)))
+
+(defn push-distribute-feed [feed]
   (with-open [client (http/create-client)] ; Create client
     (let [resp (http/GET client (:topic feed))
-          status (http/status resp)]
-      (if (= (:code status) 200) (true) (true)))))
+          subscriptions (push-get-subscriptions (:id feed))]
+      (for [subscription subscriptions]
+        (push-distribute-feed-subscription client (http/await resp) subscription)))))
 
 (defroutes routes
   (POST "/" {params :params} 
         (let [hub (:hub params)
               mode (:mode hub)]
           (cond
-            (= (or (= mode "subscribe") (= mode "unsubscribe")))
+            (or (= mode "subscribe") (= mode "unsubscribe"))
             (if (string/blank? (:callback hub))
-              {:status 400 :body "Callback is required"}
+              {:status 400 :body "Callback is required for subscription/unsubscription"}
               (if (string/blank? (:topic hub))
-                {:status 400 :body "Topic is required"}
+                {:status 400 :body "Topic is required for subscription/unsubscription"}
                 (sql/with-connection
                   {:connection-uri (System/getenv "DATABASE_URL")}
                   (let [topic_row (get-or-create-topic (:topic hub))
@@ -113,11 +131,12 @@
             (sql/with-connection
               {:connection-uri (System/getenv "DATABASE_URL")}
               (let [feeds push-fetch-required-feeds]
-                (apply push-fetch-feed feeds)
+                (map push-distribute-feed (dbg feeds))
+                {:status 202 :body "" }
               ))
             (= mode "publish") ; not finally implemented, because we don't act as a hub for now.
             (if (string/blank? (:topic hub))
-              {:status 400 :body "Topic is required"}
+              {:status 400 :body "Topic is required for publishing"}
               (sql/with-connection {:connection-uri (System/getenv "DATABASE_URL")} 
                                    (let [topic-id (get-topic (:topic hub))]
                                      (doto (new java.net.URL (:topic hub)) (.toURI))
