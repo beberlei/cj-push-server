@@ -64,7 +64,6 @@
   (subscription-exists? [this topic_id callback])
   (create-subscription [this topic_id hub])
   (delete-subscription [this topic_id hub])
-  (challenge-subscription [this topic_id hub is_subscription success failure])
   (fetch-required-feeds [this])
   (get-subscriptions [this topic_id])
 )
@@ -108,22 +107,6 @@
     (let [callback (:callback hub)]
       (sql/delete-rows :subscriptions ["callback = ? AND topic_id = ?" callback topic_id])))
 
-  (challenge-subscription [this topic_id hub is_subscription success failure]
-    (with-open [client (http/create-client)] ; Create client
-      (doto (new java.net.URL (:topic hub)) (.toURI))
-      (doto (new java.net.URL (:callback hub)) (.toURI))
-      (let [challenge (random-str 32)
-            req {"hub[mode]" (:mode hub) "hub[topic]" (:topic hub) "hub[challenge]" challenge}
-            resp (http/POST client (:callback hub) :body req)
-            challenge_check (http/string resp)
-            status (http/status resp)]
-        (if (and (= (:code status) 200) (= challenge challenge_check))
-          (do 
-            (if (= is_subscription true)
-              (create-subscription this topic_id hub)
-              (delete-subscription this topic_id hub))
-            success)
-          failure))))
 
   (fetch-required-feeds [this]
     (let [date (date/minus (date/now) (date/minutes 15))]
@@ -137,19 +120,36 @@
                             (into [] results)))
 )
 
+(defn challenge-subscription? [push-server topic_id hub is_subscription]
+  (with-open [client (http/create-client)] ; Create client
+    (doto (new java.net.URL (:topic hub)) (.toURI))
+    (doto (new java.net.URL (:callback hub)) (.toURI))
+    (let [challenge (random-str 32)
+          req {"hub[mode]" (:mode hub) "hub[topic]" (:topic hub) "hub[challenge]" challenge}
+          resp (http/POST client (:callback hub) :body req)
+          challenge_check (http/string resp)
+          status (http/status resp)]
+      (if (and (= (:code status) 200) (= challenge challenge_check))
+        (do 
+          (if (= is_subscription true)
+            (create-subscription push-server topic_id hub)
+            (delete-subscription push-server topic_id hub))
+          true)
+        false))))
+
 (defn distribute-feed-subscription [feed-resp, subscription]
   (with-open [client (http/create-client)]
     (let [resp (http/POST client (:callback subscription) :body (http/string feed-resp))]
         (http/await resp))))
 
-(defn distribute-feed [storage feed]
+(defn distribute-feed [push-server feed]
   (with-open [client (http/create-client)] ; Create client
     (let [resp (http/GET client (:topic feed))
-          subscriptions (get-subscriptions storage (:id feed))
+          subscriptions (get-subscriptions push-server (:id feed))
           resv (http/await resp)]
       (doseq [subscription subscriptions]
         (distribute-feed-subscription resv subscription))
-      (mark-topic-fetched storage feed))))
+      (mark-topic-fetched push-server feed))))
 
 (defn- make-push-server []
   (PostgreSQLPushServer.)
@@ -172,7 +172,7 @@
                         topic_id (:id topic_row)]
                     (if (and (= mode "subscription") (subscription-exists? push-server topic_id (:callback hub)))
                       {:status 409 :body "Subscription already exists"}
-                      (challenge-subscription push-server topic_id hub (= mode "subscribe")
+                      (if (challenge-subscription? push-server topic_id hub (= mode "subscribe"))
                                                    {:status 204 :body ""}
                                                    {:status 400 :body "Challenge was not accepted."}))))))
             (= mode "fetch")
