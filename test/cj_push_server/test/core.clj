@@ -1,9 +1,11 @@
 (ns cj-push-server.test.core
-  (:use [cj-push-server.core])
+  (:use [cj-push-server model util])
   (:use [clojure.test]))
 
-(deftest replace-me ;; FIXME: write
-  (def xml (slurp "sample.xml"))
-  (with-namespace-context {"atom" "http://www.w3.org/2005/Atom"}
-                         ($x:text "//atom:title" xml-doc))
-  (is false "No tests have been written."))
+(def ^{:private true} push-server (make-push-server))
+
+(deftest push-get-or-create-topic
+  (is (= "http://www.beberlei.de" (:topic (wrap-transaction (get-or-create-topic push-server "http://www.beberlei.de"))))))
+
+(deftest push-get-unknown-topic
+  (is (= nil (dbg (wrap-transaction (get-topic push-server "http://www.foobar.com/feed.xml"))))))
