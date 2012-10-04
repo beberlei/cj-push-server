@@ -173,8 +173,8 @@
                     (if (and (= mode "subscription") (subscription-exists? push-server topic_id (:callback hub)))
                       {:status 409 :body "Subscription already exists"}
                       (if (challenge-subscription? push-server topic_id hub (= mode "subscribe"))
-                                                   {:status 204 :body ""}
-                                                   {:status 400 :body "Challenge was not accepted."}))))))
+                        {:status 204 :body ""}
+                        {:status 400 :body "Challenge was not accepted."}))))))
             (= mode "fetch")
             (wrap-connection
               (let [feeds (fetch-required-feeds push-server)]
@@ -185,13 +185,10 @@
             (if (string/blank? (:topic hub))
               {:status 400 :body "Topic is required for publishing"}
               (wrap-connection
-                (let [topic-id (get-topic push-server (:topic hub))]
-                  (doto (new java.net.URL (:topic hub)) (.toURI))
-                  (sql/with-query-results results
-                                          ["SELECT * FROM subscriptions WHERE topic_id = ?" topic-id]
-                                          (into [] results))
+                (let [feed (get-topic push-server (:topic hub))]
+                  (distribute-feed push-server feed)
                   {:status 204 :body ""})))
-            (= true true)
+            :default
             {:status 400 :body "Unknown mode"})))
   (GET "/" [] {:status 204 :body ""}))
 
