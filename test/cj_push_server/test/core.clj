@@ -9,3 +9,10 @@
 
 (deftest push-get-unknown-topic
   (is (= nil (dbg (wrap-transaction (get-topic push-server "http://www.foobar.com/feed.xml"))))))
+
+(deftest push-mark-topic-fetched
+    (wrap-transaction
+      (let [feed (get-or-create-topic push-server "http://www.foobar.com/feed2.xml")]
+        (mark-topic-fetched push-server feed)
+        ))
+    (is (not= nil (:last_fetched_at (wrap-transaction (get-topic push-server "http://www.foobar.com/feed2.xml"))))))
