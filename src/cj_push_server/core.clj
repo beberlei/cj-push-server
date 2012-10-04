@@ -10,14 +10,13 @@
               [compojure.route :as route]))
 
 (defroutes routes
+  (POST "/fetch" {} (fetch-action))
   (POST "/" {params :params} 
         (let [hub (:hub params)
               mode (:mode hub)]
           (cond
             (or (= mode "subscribe") (= mode "unsubscribe"))
             (subscription-action hub mode)
-            (= mode "fetch")
-            (fetch-action)
             (= mode "publish")
             (publish-action)
             :default
