@@ -1,9 +1,7 @@
 (ns cj-push-server.core
     (:use [compojure.core :only [defroutes GET POST]])
     (:use [ring.middleware stacktrace reload])
-    (:use [cj-push-server.util])
-    (:use [cj-push-server.model])
-    (:use [cj-push-server.controller])
+    (:use [cj-push-server util model controller])
     (:require [ring.adapter.jetty :as ring]
               [compojure.handler :as handler]
               [clojure.string :as string]
